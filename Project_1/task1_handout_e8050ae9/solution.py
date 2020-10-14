@@ -1,6 +1,9 @@
 import numpy as np
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import Matern, RationalQuadratic, ExpSineSquared
+import gpytorch
+import matplotlib.pyplot as plt
+from matplotlib import rcParams
+import numpy as np
+import torch
 
 THRESHOLD = 0.5
 W1 = 1
@@ -13,7 +16,6 @@ def cost_function(true, predicted):
     """
         true: true values in 1D numpy array
         predicted: predicted values in 1D numpy array
-
         return: float
     """
     cost = (true - predicted) ** 2
@@ -45,75 +47,153 @@ def cost_function(true, predicted):
 """
 Fill in the methods of the Model. Please do not change the given methods for the checker script to work.
 You can add new methods, and make changes. The checker script performs:
-
-
     M = Model()
     M.fit_model(train_x,train_y)
     prediction = M.predict(test_x)
-
 It uses predictions to compare to the ground truth using the cost_function above.
 """
 
+class Model_template(gpytorch.models.ExactGP):
+    def __init__(self, train_x, train_y, kernel):
+        super().__init__(train_x, train_y, likelihood=gpytorch.likelihoods.GaussianLikelihood())
+        self.mean_module = gpytorch.means.ZeroMean()
+        self.covar_module = kernel
 
-class Model:
+    def forward(self, x):
+        """Forward computation of GP."""
+        mean_x = self.mean_module(x)
+        covar_x = self.covar_module(x)
+        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+
+    @property
+    def output_scale(self):
+        """Get output scale."""
+        return self.covar_module.outputscale
+
+    @output_scale.setter
+    def output_scale(self, value):
+        """Set output scale."""
+        if not isinstance(value, torch.Tensor):
+            value = torch.tensor([value])
+        self.covar_module.outputscale = value
+
+    @property
+    def length_scale(self):
+        """Get length scale."""
+        ls = self.covar_module.base_kernel.kernels[0].lengthscale
+        if ls is None:
+            ls = torch.tensor(0.0)
+        return ls
+
+    @length_scale.setter
+    def length_scale(self, value):
+        """Set length scale."""
+        if not isinstance(value, torch.Tensor):
+            value = torch.tensor([value])
+
+        try:
+            self.covar_module.lengthscale = value
+        except RuntimeError:
+            pass
+
+        try:
+            self.covar_module.base_kernel.lengthscale = value
+        except RuntimeError:
+            pass
+
+        try:
+            for kernel in self.covar_module.base_kernel.kernels:
+                kernel.lengthscale = value
+        except RuntimeError:
+            pass
+
+class Model():
     def __init__(self):
-        """
-            TODO: enter your code here
-        """
+
         pass
+
+    def get_kernel(self, kernel, composition="addition"):
+        base_kernel = []
+        if "RBF" in kernel:
+            base_kernel.append(gpytorch.kernels.RBFKernel())
+        if "linear" in kernel:
+            base_kernel.append(gpytorch.kernels.LinearKernel())
+        if "quadratic" in kernel:
+            base_kernel.append(gpytorch.kernels.PolynomialKernel(power=2))
+        if "Matern-1/2" in kernel:
+            base_kernel.append(gpytorch.kernels.MaternKernel(nu=1 / 2))
+        if "Matern-3/2" in kernel:
+            base_kernel.append(gpytorch.kernels.MaternKernel(nu=3 / 2))
+        if "Matern-5/2" in kernel:
+            base_kernel.append(gpytorch.kernels.MaternKernel(nu=5 / 2))
+        if "Cosine" in kernel:
+            base_kernel.append(gpytorch.kernels.CosineKernel())
+
+        if composition == "addition":
+            base_kernel = gpytorch.kernels.AdditiveKernel(*base_kernel)
+        elif composition == "product":
+            base_kernel = gpytorch.kernels.ProductKernel(*base_kernel)
+        else:
+            raise NotImplementedError
+        kernel = gpytorch.kernels.ScaleKernel(base_kernel)
+        return kernel
 
     def predict(self, test_x):
         """
             TODO: enter your code here
         """
-
-        ## dummy code below
         y = np.ones(test_x.shape[0]) * THRESHOLD - 0.00001
         return y
 
     def fit_model(self, train_x, train_y):
-        """
-             TODO: enter your code here
-        """
+        X = train_x
+        y = train_y
+        kernels = ["RBF", "quadratic", "Matern-1/2", "Matern-3/2", "Matern-5/2"]
+        best_kernel = {}
+        for kernel in kernels:
+            print("Training kernel: ", kernel)
+            model_temp = Model_template(X, y, self.get_kernel(kernel)).double()
+            model_temp.train()
+            optimizer = torch.optim.Adam([{'params': model_temp.parameters()}], lr=0.1)
+            mll = gpytorch.mlls.ExactMarginalLogLikelihood(model_temp.likelihood, model_temp)
+            training_iter = 100
 
-        """ Task 1 : Model selection"""
+            losses = []
+            for i in range(training_iter):
+                # Zero gradients from previous iteration
+                optimizer.zero_grad()
+                # Output from model
+                output = model_temp(X)
+                # Calc loss and backprop gradients
+                loss = -mll(output, y) #approximation of the log marginal likelihood --> loss function for parameter optimzation: minimize it
+                loss.backward() #gradient of loss function with respect to its parameters (Jacobian)
 
-        length_scales = [1, 2, 3, 4]
-        kernels = [Matern(), RationalQuadratic()]
-        # kernels = [ExpSineSquared()]
+                losses.append(loss.item())
+                optimizer.step()
 
-        # Grid search:
-        # for kernel in kernels:
-        #     gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=9)
-        #     gp.X_train_ = train_x
-        #     gp.y_train_ = train_y
-        #     gp.kernel_ = kernel
-        #     for length_scale in length_scales:
-        #         log_like_GS = gp.log_marginal_likelihood([length_scale])
-        #         print(log_like_GS)
+                if not (i%25):
+                      print("Iter - %d -- Loss %f"%(i, losses[-1]))
 
-        # Optimization method:
-        P_likelihood = []
-        Hyper_params = [None] * len(kernels)
-        for i, kernel in enumerate(kernels):
-            gp = GaussianProcessRegressor(kernel=kernel, alpha=1e-30)
-            gp.fit(train_x, train_y)
-            # print(gp._get_param_names())
-            # print(gp.get_params())
-            print("Kernel type:", kernel)
-            Hyper_params[i] = gp.kernel_.theta
-            print(f"Hyperparameters {i}:", Hyper_params[i])
-            P_likelihood.append(gp.log_marginal_likelihood())
-            print(f"kernel {i}:", P_likelihood[i])
-        pass
+            plt.plot(losses, Linewidth = '2', label=f"{kernel}")
+            best_kernel[kernel] = (loss.item(), model_temp)
+        plt.legend(loc="best")
+        plt.title("Hyperparameter Optimization: Marginal Likelihood Evolution")
+        plt.xlabel("Num Iteration", Fontsize = 14)
+        plt.ylabel("MLL Loss", Fontsize = 14)
+
+        plt.show()
+        best_model = min(best_kernel.values(), key=lambda x: x[0])[1]
+        self.fitted_model = best_model
 
 
 def main():
     train_x_name = "train_x.csv"
     train_y_name = "train_y.csv"
 
-    train_x = np.loadtxt(train_x_name, delimiter=",")[:1000, :]
-    train_y = np.loadtxt(train_y_name, delimiter=",")[:1000]
+    import pandas as pd
+    train_x = torch.tensor(pd.read_csv(train_x_name, delimiter=",").values)[:10000,:]
+    train_y = torch.tensor(pd.read_csv(train_y_name, delimiter=",").values)[:10000]
+    train_y = torch.reshape(train_y, (train_y.shape[0],))
 
     # load the test dateset
     test_x_name = "test_x.csv"
