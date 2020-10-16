@@ -1,8 +1,6 @@
 import numpy as np
 import gpytorch
 from gpytorch.lazy import LazyTensor as LT
-import matplotlib.pyplot as plt
-from matplotlib import rcParams
 import numpy as np
 import torch
 
@@ -68,59 +66,59 @@ class Model_template(gpytorch.models.ExactGP):
 
 class Model():
     def __init__(self):
-        self.train_x = None
-        self.train_y = None
-        self.test_x = None
-        self.fitted_model = None
+        # self.train_x = None
+        # self.train_y = None
+        # self.test_x = None
+        # self.fitted_model = None
         pass
 
-    @property
-    def train_x(self):
-        return self.__train_x
-
-    @train_x.setter
-    def train_x(self, value):
-        if value is not None:
-            if not torch.is_tensor(value):
-                self.__train_x = torch.tensor(value)
-            else:
-                self.__train_x = value
-
-    @property
-    def train_y(self):
-        return self.__train_y
-
-    @train_y.setter
-    def train_y(self, value):
-        if value is not None:
-            if not torch.is_tensor(value):
-                self.__train_y = torch.tensor(value)
-            else:
-                self.__train_y = value
-            if not len(self.__train_y.shape) == 1:
-                self.__train_y = torch.reshape(self.__train_y, (self.__train_y.shape[0],))
-
-    @property
-    def test_x(self):
-        return self.__test_x
-
-    @test_x.setter
-    def test_x(self, value):
-        if value is not None:
-            if not torch.is_tensor(value):
-                self.__test_x = torch.tensor(value)
-            else:
-                self.__test_x = value
-
-    @property
-    def fitted_model(self):
-        return self.__fitted_model
-
-    @fitted_model.setter
-    def fitted_model(self, value):
-        if value is not None:
-            if isinstance(value, Model_template):
-                self.__fitted_model = value
+    # @property
+    # def train_x(self):
+    #     return self.__train_x
+    #
+    # @train_x.setter
+    # def train_x(self, value):
+    #     if value is not None:
+    #         if not torch.is_tensor(value):
+    #             self.__train_x = torch.tensor(value)
+    #         else:
+    #             self.__train_x = value
+    #
+    # @property
+    # def train_y(self):
+    #     return self.__train_y
+    #
+    # @train_y.setter
+    # def train_y(self, value):
+    #     if value is not None:
+    #         if not torch.is_tensor(value):
+    #             self.__train_y = torch.tensor(value)
+    #         else:
+    #             self.__train_y = value
+    #         if not len(self.__train_y.shape) == 1:
+    #             self.__train_y = torch.reshape(self.__train_y, (self.__train_y.shape[0],))
+    #
+    # @property
+    # def test_x(self):
+    #     return self.__test_x
+    #
+    # @test_x.setter
+    # def test_x(self, value):
+    #     if value is not None:
+    #         if not torch.is_tensor(value):
+    #             self.__test_x = torch.tensor(value)
+    #         else:
+    #             self.__test_x = value
+    #
+    # @property
+    # def fitted_model(self):
+    #     return self.__fitted_model
+    #
+    # @fitted_model.setter
+    # def fitted_model(self, value):
+    #     if value is not None:
+    #         if isinstance(value, Model_template):
+    #             self.__fitted_model = value
 
     def get_kernel(self, kernel, composition="addition"):
         base_kernel = []
@@ -147,8 +145,6 @@ class Model():
             raise NotImplementedError
         kernel = gpytorch.kernels.ScaleKernel(base_kernel)
         return kernel
-
-
 
     def predict(self, test_x):
         if test_x is not None:
@@ -186,7 +182,7 @@ class Model():
             # out_base = self.fitted_model(self.test_x)
             # lower_base, upper_base = out_base.confidence_region()
         # y = np.ones(test_x.shape[0]) * THRESHOLD - 0.00001
-        return out_approx
+        return out_approx.mean
 
     def fit_model(self, train_x, train_y):
         if self.train_x is None:
@@ -231,39 +227,16 @@ class Model():
                 if not (i%25):
                       print("Iter - %d -- Loss %f"%(i, losses[-1]))
 
-            plt.plot(losses, Linewidth = '2', label=f"{kernel}")
+            # plt.plot(losses, Linewidth = '2', label=f"{kernel}")
             best_kernel[kernel] = (loss.item(), model_temp)
-        plt.legend(loc="best")
-        plt.title("Hyperparameter Optimization: Marginal Likelihood Evolution")
-        plt.xlabel("Num Iteration", Fontsize = 14)
-        plt.ylabel("MLL Loss", Fontsize = 14)
-
-        plt.show()
+        # plt.legend(loc="best")
+        # plt.title("Hyperparameter Optimization: Marginal Likelihood Evolution")
+        # plt.xlabel("Num Iteration", Fontsize = 14)
+        # plt.ylabel("MLL Loss", Fontsize = 14)
+        #
+        # plt.show()
         best_model = min(best_kernel.values(), key=lambda x: x[0])[1]
         self.fitted_model = best_model
-
-    def plot_model(self, plot_points=True):
-        self.fitted_model.eval()
-        with torch.no_grad():
-            out_base = self.fitted_model(self.test_x)
-            lower_base, upper_base = out_base.confidence_region()
-
-            out_approx = self.predict(self.test_x)
-            lower_approx, upper_approx = out_approx.confidence_region()
-
-        if plot_points:
-            plt.plot(self.train_x, self.train_y, 'k*', label='Train Data')
-
-        plt.plot(self.test_x, out_base.mean, 'b-', label='Mean (Accurate) Prediction')
-        plt.fill_between(self.test_x.numpy(), lower_base.numpy(), upper_base.numpy(),
-                         color='b', alpha=0.2, label='Accurate Predictive Distribution')
-
-        plt.plot(self.test_x, out_approx.mean, 'b-', label='Mean (Approximated) Prediction')
-        plt.fill_between(self.test_x.numpy(), lower_approx.numpy(), upper_approx.numpy(),
-                         color='b', alpha=0.2, label='Approximate Predictive Distribution')
-        plt.legend(loc='upper left')
-        plt.show()
-        print('Finished Plotting')
 
 
 def main():
@@ -271,8 +244,8 @@ def main():
     train_y_name = "train_y.csv"
 
     import pandas as pd
-    train_x = np.loadtxt(train_x_name, delimiter=",")[:10000, :]
-    train_y = np.loadtxt(train_y_name, delimiter=",")[:10000]
+    train_x = np.loadtxt(train_x_name, delimiter=",")
+    train_y = np.loadtxt(train_y_name, delimiter=",")
 
     # load the test dateset
     test_x_name = "test_x.csv"
@@ -298,10 +271,11 @@ def main():
         actual_lengthscale = torch.tensor(data = [[2.6226]], dtype = torch.float64)
         M.fitted_model.covar_module.base_kernel.kernels[0].lengthscale = actual_lengthscale
 
-    M.train_x = train_x
-    M.train_y = train_y
+    M.train_x = torch.tensor(train_x)
+    train_tensor_y = torch.tensor(train_y)
+    M.train_y = torch.reshape(train_tensor_y, (train_tensor_y.shape[0],))
     M.test_x = test_x
-    prediction = M.predict(torch.tensor(test_x))
+    prediction = M.predict(test_x)
     # M.plot_model()
 
     # print(prediction)
