@@ -148,8 +148,8 @@ class Model():
 
     def predict(self, test_x):
         if test_x is not None:
-            if torch.is_tensor(test_x):
-                self.test_x = test_x
+            if not torch.is_tensor(test_x):
+                self.test_x = torch.tensor(test_x)
 
         self.fitted_model.eval()
         with torch.no_grad():
@@ -160,7 +160,7 @@ class Model():
             # choosing n random columns for approximation
             idx = np.arange(self.train_x.shape[0])
             np.random.shuffle(idx)
-            n = 750
+            n = 7500
             active = idx[:n]
             passive = idx[n:]
 
@@ -182,29 +182,24 @@ class Model():
             # out_base = self.fitted_model(self.test_x)
             # lower_base, upper_base = out_base.confidence_region()
         # y = np.ones(test_x.shape[0]) * THRESHOLD - 0.00001
-        return out_approx.mean
+        return out_approx.mean.numpy()
 
     def fit_model(self, train_x, train_y):
-        if self.train_x is None:
-            if not torch.is_tensor(train_x):
-                self.train_x = torch.tensor(train_x)
-            else:
-                self.train_x = train_x
-        elif not torch.is_tensor(self.train_x):
+        if not torch.is_tensor(train_x):
             self.train_x = torch.tensor(train_x)
+        else:
+            self.train_x = train_x
 
-        if self.train_y is None:
-            if not torch.is_tensor(train_y):
-                self.train_y = torch.tensor(train_y)
-            else:
-                self.train_y = train_y
-        elif not torch.is_tensor(self.train_y):
+        if not torch.is_tensor(train_y):
             self.train_y = torch.tensor(train_y)
+        else:
+            self.train_y = train_y
 
         if not len(self.train_y.shape) == 1:
             self.train_y = torch.reshape(self.train_y, (self.train_y.shape[0],))
 
-        kernels = ["RBF", "quadratic", "Matern-1/2", "Matern-3/2", "Matern-5/2"]
+        # kernels = ["RBF", "quadratic", "Matern-1/2", "Matern-3/2", "Matern-5/2"]
+        kernels = ["Matern-1/2"]
         best_kernel = {}
         for kernel in kernels:
             print("Training kernel: ", kernel)
@@ -252,29 +247,32 @@ def main():
     test_x = np.loadtxt(test_x_name, delimiter=",")
 
     M = Model()
-    FIT = False
-    if FIT:
-        M.fit_model(train_x, train_y)
-        for param_name, param in M.fitted_model.named_parameters():
-            print(f'Parameter name: {param_name:42} value = {param.item()}')
-    else:
-        print("Set fitted model: ")
-        X = torch.tensor(train_x)
-        y = torch.tensor(train_y)
-        y = torch.reshape(y, (y.shape[0],))
-        fitted_model = Model_template(X, y, M.get_kernel("Matern-1/2")).double()
-        M.fitted_model = fitted_model
-        actual_likelihood_noise = torch.tensor(data = [0.0017], dtype=torch.float64)
-        M.fitted_model.likelihood.noise_covar.noise = actual_likelihood_noise
-        actual_outputscale = torch.tensor(data = [0.1415], dtype=torch.float64)
-        M.fitted_model.covar_module.outputscale = actual_outputscale
-        actual_lengthscale = torch.tensor(data = [[2.6226]], dtype = torch.float64)
-        M.fitted_model.covar_module.base_kernel.kernels[0].lengthscale = actual_lengthscale
+    M.fit_model(train_x, train_y)
 
-    M.train_x = torch.tensor(train_x)
-    train_tensor_y = torch.tensor(train_y)
-    M.train_y = torch.reshape(train_tensor_y, (train_tensor_y.shape[0],))
-    M.test_x = test_x
+
+    # FIT = False
+    # if FIT:
+    #     M.fit_model(train_x, train_y)
+    #     for param_name, param in M.fitted_model.named_parameters():
+    #         print(f'Parameter name: {param_name:42} value = {param.item()}')
+    # else:
+    #     print("Set fitted model: ")
+    #     X = torch.tensor(train_x)
+    #     y = torch.tensor(train_y)
+    #     y = torch.reshape(y, (y.shape[0],))
+    #     fitted_model = Model_template(X, y, M.get_kernel("Matern-1/2")).double()
+    #     M.fitted_model = fitted_model
+    #     actual_likelihood_noise = torch.tensor(data = [0.0017], dtype=torch.float64)
+    #     M.fitted_model.likelihood.noise_covar.noise = actual_likelihood_noise
+    #     actual_outputscale = torch.tensor(data = [0.1415], dtype=torch.float64)
+    #     M.fitted_model.covar_module.outputscale = actual_outputscale
+    #     actual_lengthscale = torch.tensor(data = [[2.6226]], dtype = torch.float64)
+    #     M.fitted_model.covar_module.base_kernel.kernels[0].lengthscale = actual_lengthscale
+
+    # M.train_x = torch.tensor(train_x)
+    # train_tensor_y = torch.tensor(train_y)
+    # M.train_y = torch.reshape(train_tensor_y, (train_tensor_y.shape[0],))
+    # M.test_x = test_x
     prediction = M.predict(test_x)
     # M.plot_model()
 
