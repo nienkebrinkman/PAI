@@ -1,10 +1,8 @@
 import numpy as np
-import gpytorch
-from gpytorch.lazy import LazyTensor as LT
-import matplotlib.pyplot as plt
-from matplotlib import rcParams
-import numpy as np
-import torch
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import Matern, RationalQuadratic, ExpSineSquared, RBF
+from sklearn.kernel_approximation import Nystroem,RBFSampler
+import time
 
 THRESHOLD = 0.5
 W1 = 1
@@ -54,258 +52,111 @@ You can add new methods, and make changes. The checker script performs:
 It uses predictions to compare to the ground truth using the cost_function above.
 """
 
-class Model_template(gpytorch.models.ExactGP):
-    def __init__(self, train_x, train_y, kernel):
-        super().__init__(train_x, train_y, likelihood=gpytorch.likelihoods.GaussianLikelihood())
-        self.mean_module = gpytorch.means.ZeroMean()
-        self.covar_module = kernel
 
-    def forward(self, x):
-        """Forward computation of GP."""
-        mean_x = self.mean_module(x)
-        covar_x = self.covar_module(x)
-        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
-
-class Model():
+class Model:
     def __init__(self):
-        self.train_x = None
-        self.train_y = None
-        self.test_x = None
-        self.fitted_model = None
+        """
+            TODO: enter your code here
+        """
+        self.kernel = RBF()
+        self.gp = GaussianProcessRegressor(kernel=self.kernel, n_restarts_optimizer=9)
         pass
 
-    @property
-    def train_x(self):
-        return self.__train_x
-
-    @train_x.setter
-    def train_x(self, value):
-        if value is not None:
-            if not torch.is_tensor(value):
-                self.__train_x = torch.tensor(value)
-            else:
-                self.__train_x = value
-
-    @property
-    def train_y(self):
-        return self.__train_y
-
-    @train_y.setter
-    def train_y(self, value):
-        if value is not None:
-            if not torch.is_tensor(value):
-                self.__train_y = torch.tensor(value)
-            else:
-                self.__train_y = value
-            if not len(self.__train_y.shape) == 1:
-                self.__train_y = torch.reshape(self.__train_y, (self.__train_y.shape[0],))
-
-    @property
-    def test_x(self):
-        return self.__test_x
-
-    @test_x.setter
-    def test_x(self, value):
-        if value is not None:
-            if not torch.is_tensor(value):
-                self.__test_x = torch.tensor(value)
-            else:
-                self.__test_x = value
-
-    @property
-    def fitted_model(self):
-        return self.__fitted_model
-
-    @fitted_model.setter
-    def fitted_model(self, value):
-        if value is not None:
-            if isinstance(value, Model_template):
-                self.__fitted_model = value
-
-    def get_kernel(self, kernel, composition="addition"):
-        base_kernel = []
-        if "RBF" in kernel:
-            base_kernel.append(gpytorch.kernels.RBFKernel())
-        if "linear" in kernel:
-            base_kernel.append(gpytorch.kernels.LinearKernel())
-        if "quadratic" in kernel:
-            base_kernel.append(gpytorch.kernels.PolynomialKernel(power=2))
-        if "Matern-1/2" in kernel:
-            base_kernel.append(gpytorch.kernels.MaternKernel(nu=1 / 2))
-        if "Matern-3/2" in kernel:
-            base_kernel.append(gpytorch.kernels.MaternKernel(nu=3 / 2))
-        if "Matern-5/2" in kernel:
-            base_kernel.append(gpytorch.kernels.MaternKernel(nu=5 / 2))
-        if "Cosine" in kernel:
-            base_kernel.append(gpytorch.kernels.CosineKernel())
-
-        if composition == "addition":
-            base_kernel = gpytorch.kernels.AdditiveKernel(*base_kernel)
-        elif composition == "product":
-            base_kernel = gpytorch.kernels.ProductKernel(*base_kernel)
-        else:
-            raise NotImplementedError
-        kernel = gpytorch.kernels.ScaleKernel(base_kernel)
-        return kernel
-
-
-
     def predict(self, test_x):
-        if test_x is not None:
-            if torch.is_tensor(test_x):
-                self.test_x = test_x
-
-        self.fitted_model.eval()
-        with torch.no_grad():
-            test_train_covar = gpytorch.lazy.delazify(self.fitted_model.covar_module(self.test_x, self.train_x))
-            train_test_covar = test_train_covar.transpose(-1, -2)
-            test_test_covar = gpytorch.lazy.delazify(self.fitted_model.covar_module(self.test_x, self.test_x))
-            train_train_covar = gpytorch.lazy.delazify(self.fitted_model.covar_module(self.train_x, self.train_x))
-            # choosing n random columns for approximation
-            idx = np.arange(self.train_x.shape[0])
-            np.random.shuffle(idx)
-            n = 750
-            active = idx[:n]
-            passive = idx[n:]
-
-            noise_inv = 1/self.fitted_model.likelihood.noise
-            identity = torch.eye(self.train_x.shape[0])
-
-            Kmm = train_train_covar[...,active][active,...]
-            Kmn = train_train_covar[active,:]
-            Knm = train_train_covar[:,active]
-            prior_covar_inv = noise_inv*identity - (noise_inv**2)*Knm@torch.pinverse(Kmm+noise_inv*Kmn@Knm)@Kmn
-
-            mean_correction_rhs = prior_covar_inv@self.train_y
-            posterior_mean = test_train_covar @ mean_correction_rhs
-            covar_correction_rhs = prior_covar_inv@train_test_covar
-            posterior_covar = gpytorch.lazy.lazify(test_test_covar + test_train_covar @ covar_correction_rhs.mul(-1))
-
-            out_approx = gpytorch.distributions.MultivariateNormal(posterior_mean, posterior_covar)
-            # lower_approx, upper_approx = out_approx.confidence_region()
-            # out_base = self.fitted_model(self.test_x)
-            # lower_base, upper_base = out_base.confidence_region()
-        # y = np.ones(test_x.shape[0]) * THRESHOLD - 0.00001
-        return out_approx
+        """
+            TODO: enter your code here
+        """
+        print(self.gp)
+        y, sigma = self.gp.predict(test_x, return_std=True)
+        
+        ## dummy code below
+        #y = np.ones(test_x.shape[0]) * THRESHOLD - 0.00001
+        return y
 
     def fit_model(self, train_x, train_y):
-        if self.train_x is None:
-            if not torch.is_tensor(train_x):
-                self.train_x = torch.tensor(train_x)
-            else:
-                self.train_x = train_x
-        elif not torch.is_tensor(self.train_x):
-            self.train_x = torch.tensor(train_x)
+        """
+             TODO: enter your code here
+        """
 
-        if self.train_y is None:
-            if not torch.is_tensor(train_y):
-                self.train_y = torch.tensor(train_y)
-            else:
-                self.train_y = train_y
-        elif not torch.is_tensor(self.train_y):
-            self.train_y = torch.tensor(train_y)
+        """ Task 1 : Model selection"""
+        idx = np.arange(train_x.shape[0])
+        np.random.shuffle(idx)
+        n = 2000
+        active = idx[:n]
+        test_idx = idx[1000:]
+        train_x_reduced = train_x[active,:]
+        train_y_reduced = train_y[active]
+        # feature_map_nystroem = Nystroem(gamma=.2, random_state=1, n_components=300)
+        # data_transformed = feature_map_nystroem.fit_transform(train_x,train_y)
+        # rbf_feature = RBFSampler(gamma=.2, random_state=1, n_components = 100)
+        # feature_matrix = rbf_feature.fit_transform(train_x,train_y)
+        # gram_matrix_approx = feature_matrix @ feature_matrix.T
+        # print(rbf_feature.get_params())
+        # length_scales = [1, 2, 3, 4]
+        kernels = [RBF(1.27),Matern(length_scale=4,nu=1.5),Matern(length_scale=2.5,nu=2.5)]
+        
+        # kernel = RBF(1)
+        # gram_matrix = kernel((train_x[:1000,:]))
+        # import matplotlib.pyplot as plt
+        # plt.matshow(gram_matrix)
+        # plt.matshow(gram_matrix_approx)
+        # plt.show()
+        
+        # Optimization method:
+        P_likelihood = []
+        Hyper_params = [None] * len(kernels)
+        costs = [None] * len(kernels)
+        fitted_kernels = [None] * len(kernels)
+        for i, kernel in enumerate(kernels):
+            print(kernel)
+            # kernel = RBF(1)
+            # print(kernel(train_x))
+            self.gp = GaussianProcessRegressor(kernel=kernel, alpha=1, n_restarts_optimizer=50)
+            start_time = time.time()
+            self.gp.fit(train_x_reduced,train_y_reduced)
+            print("--- %s seconds ---" % (time.time() - start_time))
+            # print(gp._get_param_names())
+            # print(gp.get_params())
+            print("Kernel type:", kernel)
+            params = self.gp.get_params(deep=True)
+            print(params)
+            Hyper_params[i] = self.gp.kernel_.theta
+            print(f"Hyperparameters {i}:", Hyper_params[i])
+            P_likelihood.append(self.gp.log_marginal_likelihood())
+            fitted_kernels[i] = self.gp.kernel_
+            print("kernel:", str(self.gp.kernel_) , P_likelihood[i])
+            prediction = self.predict(train_x[test_idx,:])
+            costs[i] = cost_function(train_y[test_idx], prediction)
 
-        if not len(self.train_y.shape) == 1:
-            self.train_y = torch.reshape(self.train_y, (self.train_y.shape[0],))
-
-        kernels = ["RBF", "quadratic", "Matern-1/2", "Matern-3/2", "Matern-5/2"]
-        best_kernel = {}
-        for kernel in kernels:
-            print("Training kernel: ", kernel)
-            model_temp = Model_template(self.train_x, self.train_y, self.get_kernel(kernel)).double()
-            model_temp.train()
-            optimizer = torch.optim.Adam([{'params': model_temp.parameters()}], lr=0.1)
-            mll = gpytorch.mlls.ExactMarginalLogLikelihood(model_temp.likelihood, model_temp)
-            training_iter = 100
-
-            losses = []
-            for i in range(training_iter):
-                optimizer.zero_grad() # Zero gradients from previous iteration
-                output = model_temp(self.train_x) # Output from model
-                loss = -mll(output, self.train_y) #approximation of the log marginal likelihood --> loss function for parameter optimzation: minimize it
-                loss.backward() #gradient of loss function with respect to its parameters (Jacobian)
-
-                losses.append(loss.item())
-                optimizer.step()
-
-                if not (i%25):
-                      print("Iter - %d -- Loss %f"%(i, losses[-1]))
-
-            plt.plot(losses, Linewidth = '2', label=f"{kernel}")
-            best_kernel[kernel] = (loss.item(), model_temp)
-        plt.legend(loc="best")
-        plt.title("Hyperparameter Optimization: Marginal Likelihood Evolution")
-        plt.xlabel("Num Iteration", Fontsize = 14)
-        plt.ylabel("MLL Loss", Fontsize = 14)
-
-        plt.show()
-        best_model = min(best_kernel.values(), key=lambda x: x[0])[1]
-        self.fitted_model = best_model
-
-    def plot_model(self, plot_points=True):
-        self.fitted_model.eval()
-        with torch.no_grad():
-            out_base = self.fitted_model(self.test_x)
-            lower_base, upper_base = out_base.confidence_region()
-
-            out_approx = self.predict(self.test_x)
-            lower_approx, upper_approx = out_approx.confidence_region()
-
-        if plot_points:
-            plt.plot(self.train_x, self.train_y, 'k*', label='Train Data')
-
-        plt.plot(self.test_x, out_base.mean, 'b-', label='Mean (Accurate) Prediction')
-        plt.fill_between(self.test_x.numpy(), lower_base.numpy(), upper_base.numpy(),
-                         color='b', alpha=0.2, label='Accurate Predictive Distribution')
-
-        plt.plot(self.test_x, out_approx.mean, 'b-', label='Mean (Approximated) Prediction')
-        plt.fill_between(self.test_x.numpy(), lower_approx.numpy(), upper_approx.numpy(),
-                         color='b', alpha=0.2, label='Approximate Predictive Distribution')
-        plt.legend(loc='upper left')
-        plt.show()
-        print('Finished Plotting')
+            
+        print(costs)
+        best_kernel = fitted_kernels[np.argmin(costs)]
+        print(best_kernel)
+        self.gp = GaussianProcessRegressor(kernel=best_kernel, alpha=1, n_restarts_optimizer=50)
+        pass
 
 
 def main():
     train_x_name = "train_x.csv"
     train_y_name = "train_y.csv"
 
-    import pandas as pd
-    train_x = np.loadtxt(train_x_name, delimiter=",")[:10000, :]
-    train_y = np.loadtxt(train_y_name, delimiter=",")[:10000]
+    train_x = np.loadtxt(train_x_name, delimiter=",")
+    train_y = np.loadtxt(train_y_name, delimiter=",")
 
     # load the test dateset
     test_x_name = "test_x.csv"
     test_x = np.loadtxt(test_x_name, delimiter=",")
 
     M = Model()
-    FIT = False
-    if FIT:
-        M.fit_model(train_x, train_y)
-        for param_name, param in M.fitted_model.named_parameters():
-            print(f'Parameter name: {param_name:42} value = {param.item()}')
-    else:
-        print("Set fitted model: ")
-        X = torch.tensor(train_x)
-        y = torch.tensor(train_y)
-        y = torch.reshape(y, (y.shape[0],))
-        fitted_model = Model_template(X, y, M.get_kernel("Matern-1/2")).double()
-        M.fitted_model = fitted_model
-        actual_likelihood_noise = torch.tensor(data = [0.0017], dtype=torch.float64)
-        M.fitted_model.likelihood.noise_covar.noise = actual_likelihood_noise
-        actual_outputscale = torch.tensor(data = [0.1415], dtype=torch.float64)
-        M.fitted_model.covar_module.outputscale = actual_outputscale
-        actual_lengthscale = torch.tensor(data = [[2.6226]], dtype = torch.float64)
-        M.fitted_model.covar_module.base_kernel.kernels[0].lengthscale = actual_lengthscale
+    M.fit_model(train_x, train_y)
+    prediction = M.predict(test_x)
 
-    M.train_x = train_x
-    M.train_y = train_y
-    M.test_x = test_x
-    prediction = M.predict(torch.tensor(test_x))
-    # M.plot_model()
-
-    # print(prediction)
-
+    print(prediction)
+    eval_x = np.loadtxt(train_x_name, delimiter=",")[1000:1100,:]
+    eval_y = np.loadtxt(train_y_name, delimiter=",")[1000:1100]
+    prediction2 = M.predict(eval_x)
+    cost = cost_function(eval_y, prediction2)
+    print('cost ',cost)
 
 if __name__ == "__main__":
     main()
