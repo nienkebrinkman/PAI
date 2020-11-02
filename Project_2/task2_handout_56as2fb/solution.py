@@ -118,8 +118,8 @@ class BayesianLayer(torch.nn.Module):
 
         self.prior_mu = 0
         self.prior_sigma = 1
-        self.weight_mu = nn.Parameter(torch.Tensor(output_dim, input_dim))
-        self.weight_logsigma = nn.Parameter(torch.Tensor(output_dim, input_dim))
+        self.weight_mu = nn.Parameter(torch.zeros((output_dim, input_dim)))
+        self.weight_logsigma = nn.Parameter(torch.zeros((output_dim, input_dim)))
 
         if self.use_bias:
             self.bias_mu = nn.Parameter(torch.zeros(output_dim))
@@ -187,9 +187,9 @@ class BayesNet(torch.nn.Module):
             (batch_size, 10)
         )  # TODO: check the dimension of the output of self.forward()
         for nr in range(num_forward_passes):
-            sum_x = torch.softmax(self.forward(x))
+            sum_x += F.softmax(self.forward(x), dim=1)
 
-        probs = 1 / num_forward_passes * sum_x
+        probs = sum_x / num_forward_passes
         # TODO: make n random forward passes
         # compute the categorical softmax probabilities
         # marginalize the probabilities over the n forward passes
@@ -203,10 +203,12 @@ class BayesNet(torch.nn.Module):
         """
         # TODO: enter your code here
         nr_layers = len(self.net)
-        loss = input_layer.kl_divergence()
-        for layer in range(nr_layers):
-            loss += self.net[layer][0].kl_divergence()
-        return loss
+        self.loss = 0  # input_layer.kl_divergence()
+        for layer in range(0, nr_layers):
+            if layer == nr_layers - 1:
+                self.loss += self.net[layer].kl_divergence()
+            else:
+                self.loss += self.net[layer][0].kl_divergence()
 
 
 def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_interval=100):
@@ -226,7 +228,8 @@ def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_in
             y_pred = model(batch_x)
             loss = criterion(y_pred, batch_y)
             if type(model) == BayesNet:
-                loss -= model.kl_loss()
+                model.kl_loss()
+                loss -= model.loss
                 pass
                 # BayesNet implies additional KL-loss.
                 # TODO: enter your code here
