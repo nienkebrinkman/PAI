@@ -1,0 +1,6 @@
+*.npz
+*.bytes
+*.pdf
+.vscode
+*.so
+*.zip
