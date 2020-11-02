@@ -345,7 +345,7 @@ def evaluate_model(model, model_type, test_loader, batch_size, extended_eval, pr
 
 
 def main(test_loader=None, private_test=False):
-    num_epochs = 100  # You might want to adjust this
+    num_epochs = 10  # You might want to adjust this
     batch_size = 128  # Try playing around with this
     print_interval = 100
     learning_rate = 5e-4  # Try playing around with this
