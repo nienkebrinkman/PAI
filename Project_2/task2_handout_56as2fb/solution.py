@@ -117,9 +117,9 @@ class BayesianLayer(torch.nn.Module):
         self.use_bias = bias
 
         self.prior_mu = 0
-        self.prior_sigma = 1
+        self.prior_sigma = 0.1
         self.weight_mu = nn.Parameter(torch.zeros((output_dim, input_dim)))
-        self.weight_logsigma = nn.Parameter(torch.zeros((output_dim, input_dim)))
+        self.weight_logsigma = nn.Parameter(torch.log(torch.ones((output_dim, input_dim)) * 0.075))
 
         if self.use_bias:
             self.bias_mu = nn.Parameter(torch.zeros(output_dim))
@@ -156,7 +156,19 @@ class BayesianLayer(torch.nn.Module):
         Computes the KL divergence between one Gaussian posterior
         and the Gaussian prior.
         """
-        kl = 0.5 * torch.sum(torch.exp(logsigma ** 2) + mu ** 2 - 1 - logsigma ** 2)
+        # kl = 0.5 * torch.sum(torch.exp(logsigma) ** 2 + mu ** 2 - 1 - logsigma * 2)
+        # return kl
+
+        # mu_prior = torch.zeros_like(mu)
+        # logsigma_prior = torch.log(torch.ones_like(logsigma) * self.prior_sigma)
+
+        kl = torch.sum(
+            np.log(self.prior_sigma)
+            - logsigma
+            + 1
+            / (2 * self.prior_sigma ** 2)
+            * ((mu - self.prior_mu) ** 2 + torch.exp(logsigma) ** 2 - self.prior_sigma ** 2)
+        )
         return kl
 
 
@@ -204,11 +216,31 @@ class BayesNet(torch.nn.Module):
         # TODO: enter your code here
         nr_layers = len(self.net)
         self.loss = 0  # input_layer.kl_divergence()
+        n = 0
+        nn = 0
         for layer in range(0, nr_layers):
             if layer == nr_layers - 1:
+                para = list(self.net[layer].parameters())
                 self.loss += self.net[layer].kl_divergence()
+                nn += len(self.net[layer].weight_mu.view(-1))
+                for i in range(0, len(para)):
+                    try:
+                        n += para[i].shape[0] + para[i].shape[1]
+                    except IndexError:
+                        n += para[i].shape[0]
+                # print(self.net[layer].kl_divergence())
             else:
+                para = list(self.net[layer][0].parameters())
                 self.loss += self.net[layer][0].kl_divergence()
+                # print(self.net[layer][0].kl_divergence())
+                nn += len(self.net[layer][0].weight_mu.view(-1))
+                for i in range(0, len(para)):
+                    try:
+                        n += para[i].shape[0] + para[i].shape[1]
+                    except IndexError:
+                        n += para[i].shape[0]
+
+        self.loss  # / n
 
 
 def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_interval=100):
@@ -226,10 +258,13 @@ def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_in
         for k, (batch_x, batch_y) in enumerate(train_loader):
             model.zero_grad()
             y_pred = model(batch_x)
+            # if k % 1000 == 0:
+            # print(y_pred)
             loss = criterion(y_pred, batch_y)
             if type(model) == BayesNet:
                 model.kl_loss()
-                loss -= model.loss
+                # print(model.loss)
+                loss += 0.0000001 * model.loss  #  / batch_x.shape[0]
                 pass
                 # BayesNet implies additional KL-loss.
                 # TODO: enter your code here
@@ -345,8 +380,8 @@ def evaluate_model(model, model_type, test_loader, batch_size, extended_eval, pr
 
 
 def main(test_loader=None, private_test=False):
-    num_epochs = 100  # You might want to adjust this
-    batch_size = 128  # Try playing around with this
+    num_epochs = 200  # You might want to adjust this
+    batch_size = 1048  # Try playing around with this
     print_interval = 100
     learning_rate = 5e-4  # Try playing around with this
     model_type = "bayesnet"  # Try changing this to "densenet" as a comparison
