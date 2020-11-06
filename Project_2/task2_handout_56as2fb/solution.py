@@ -264,7 +264,7 @@ def train_network(model, optimizer, train_loader, num_epochs=100, pbar_update_in
             if type(model) == BayesNet:
                 model.kl_loss()
                 # print(model.loss)
-                loss += 0.0000001 * model.loss  #  / batch_x.shape[0]
+                loss += 0.00001 * model.loss  #  / batch_x.shape[0]
                 pass
                 # BayesNet implies additional KL-loss.
                 # TODO: enter your code here
@@ -380,7 +380,7 @@ def evaluate_model(model, model_type, test_loader, batch_size, extended_eval, pr
 
 
 def main(test_loader=None, private_test=False):
-    num_epochs = 200  # You might want to adjust this
+    num_epochs = 175  # You might want to adjust this
     batch_size = 1048  # Try playing around with this
     print_interval = 100
     learning_rate = 5e-4  # Try playing around with this
