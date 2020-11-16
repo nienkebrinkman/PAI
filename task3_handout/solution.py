@@ -2,6 +2,8 @@ import numpy as np
 from scipy.optimize import fmin_l_bfgs_b
 from sklearn.gaussian_process.kernels import ConstantKernel, Matern
 from sklearn.gaussian_process import GaussianProcessRegressor
+from scipy.stats import norm
+
 
 domain = np.array([[0, 5]])
 
@@ -36,19 +38,20 @@ class BO_algo:
 
         m52 = ConstantKernel(self.variance_v) * Matern(
             length_scale=self.length_scale_v, nu=self.nu_v
-        )
-        self.gpr_v = GaussianProcessRegressor(
-            kernel=m52, alpha=self.noise_v ** 2
         ) + ConstantKernel(self.mean_mapping_v)
+        self.gpr_v = GaussianProcessRegressor(kernel=m52, alpha=self.noise_v ** 2)
 
         ## X- and f- and v- sample
-        self.X_sample = np.random.randn(1) * 5
+        np.random.seed(0)
+        self.X_sample = np.random.rand(1) * 5
         self.f_sample = f(self.X_sample)
         self.v_sample = v(self.X_sample)
 
         # Fit the GPs
-        self.gpr_f.fit(self.X_sample, self.f_sample)
-        self.gpr_v.fit(self.X_sample, self.v_sample)
+        self.gpr_f.fit(self.X_sample.reshape(-1, 1), self.f_sample.reshape(-1, 1))
+        self.gpr_v.fit(self.X_sample.reshape(-1, 1), self.v_sample.reshape(-1, 1))
+
+        self.v_treshold = 1.2
 
     def next_recommendation(self):
         """
@@ -59,7 +62,7 @@ class BO_algo:
         recommendation: np.ndarray
             1 x domain.shape[0] array containing the next point to evaluate
         """
-        self.optimize_acquisition_function()
+        return self.optimize_acquisition_function()
 
     def optimize_acquisition_function(self):
         """
@@ -102,24 +105,44 @@ class BO_algo:
             Value of the acquisition function at x
         """
 
-        mu, sigma = self.gpr_f.predict(x, return_std=True)
-        mu_sample = gpr.predict(self.X_sample)
+        mu_f, sigma_f = self.gpr_f.predict(np.asarray(x).reshape(-1, 1), return_std=True)
+        mu_sample_f = self.gpr_f.predict(self.X_sample.reshape(-1, 1))
+        mu_v, sigma_v = self.gpr_v.predict(np.asarray(x).reshape(-1, 1), return_std=True)
+        mu_sample_v = self.gpr_v.predict(self.X_sample.reshape(-1, 1))
 
-        sigma = sigma.reshape(-1, 1)
+        sigma_f = sigma_f.reshape(-1, 1)
+        sigma_v = sigma_v.reshape(-1, 1)
 
         # Needed for noise-based model,
         # otherwise use np.max(Y_sample).
         # See also section 2.4 in [...]
-        mu_sample_opt = np.max(mu_sample)
 
-        # xi = (np.max(self.f_sample) - mu) / sigma
+        mask = (mu_sample_v > self.v_treshold)[0]
+        if (mask == False).all():
+            mu_sample_opt = np.max(mu_sample_f)
+            v_penalty = mu_sample_v[np.argmax(mu_sample_f)]
+        else:
+            mu_sample_opt = mu_sample_f[mask].max()
+            v_penalty = mu_sample_v[mu_sample_f[mask].argmax()]
+
+        # xi = (np.max(self.f_sample) - mu_f) / sigma_f
         with np.errstate(divide="warn"):
-            imp = mu_sample_opt - mu  # - xi?????
-            Z = imp / sigma
-            ei = imp * norm.cdf(Z) + sigma * norm.pdf(Z)
-            ei[sigma == 0.0] = 0.0
+            imp_f = mu_sample_opt - mu_f
+            Z_f = imp_f / sigma_f
+            ei_f = imp_f * norm.cdf(Z_f) + sigma_f * norm.pdf(Z_f)
 
-        return ei
+            imp_v = v_penalty - mu_v
+            Z_v = imp_v / sigma_v
+            ei_v = imp_v * norm.cdf(Z_v) + sigma_v * norm.pdf(Z_v)
+
+            ei = ei_f + ei_v * 0.9
+
+            # if v_penalty < self.v_treshold:
+            #     ei += v_penalty
+            ei[sigma_f == 0.0] = 0.0
+            ei[sigma_v == 0.0] = 0.0
+
+        return ei[0]
 
     def add_data_point(self, x, f, v):
         """
@@ -135,8 +158,9 @@ class BO_algo:
             Model training speed
         """
 
-        # TODO: enter your code here
-        raise NotImplementedError
+        self.X_sample = np.append(self.X_sample, x)
+        self.f_sample = np.append(self.f_sample, f)
+        self.v_sample = np.append(self.v_sample, v)
 
     def get_solution(self):
         """
@@ -148,8 +172,14 @@ class BO_algo:
             1 x domain.shape[0] array containing the optimal solution of the problem
         """
 
-        # TODO: enter your code here
-        raise NotImplementedError
+        mask = self.v_sample > self.v_treshold
+        if (mask == False).all():
+            mask = self.X_sample > 0
+
+        X_sample = self.X_sample[mask]
+        f_sample = self.f_sample[mask]
+
+        return X_sample[np.where(f_sample == f_sample.max())]
 
 
 """ Toy problem to check code works as expected """
@@ -169,7 +199,7 @@ def f(x):
 
 def v(x):
     """Dummy speed"""
-    return 2.0
+    return x / 3
 
 
 def main():
