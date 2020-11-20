@@ -1,8 +1,9 @@
 import numpy as np
 from scipy.optimize import fmin_l_bfgs_b
-from sklearn.gaussian_process.kernels import ConstantKernel, Matern
+from sklearn.gaussian_process.kernels import ConstantKernel, Matern, Sum, WhiteKernel
 from sklearn.gaussian_process import GaussianProcessRegressor
 from scipy.stats import norm
+import matplotlib.pyplot as plt
 
 
 domain = np.array([[0, 5]])
@@ -21,10 +22,11 @@ class BO_algo:
         self.variance_f = 0.5
         self.noise_f = 0.15  # Accuracy
 
-        m52 = ConstantKernel(self.variance_f) * Matern(
+        m52_f = ConstantKernel(self.variance_f) * Matern(
             length_scale=self.length_scale_f, nu=self.nu_f
-        )
-        self.gpr_f = GaussianProcessRegressor(kernel=m52, alpha=self.noise_f ** 2)
+        ) + WhiteKernel(noise_level=self.noise_f ** 2)
+        # self.gpr_f = GaussianProcessRegressor(kernel=m52_f, alpha=self.noise_f ** 2)
+        self.gpr_f = GaussianProcessRegressor(kernel=m52_f)
 
         ## Speed
         self.length_scale_v = 0.5
@@ -36,16 +38,23 @@ class BO_algo:
 
         self.min_v = 1.2
 
-        m52 = ConstantKernel(self.variance_v) * Matern(
+        m52_v = ConstantKernel(self.variance_v) * Matern(
             length_scale=self.length_scale_v, nu=self.nu_v
-        ) + ConstantKernel(self.mean_mapping_v)
-        self.gpr_v = GaussianProcessRegressor(kernel=m52, alpha=self.noise_v ** 2)
+        ) + WhiteKernel(noise_level=self.noise_v ** 2)
+        # Ck = ConstantKernel(self.mean_mapping_v)
+        # summed_k = Sum(m52, Ck)
+        # self.gpr_v = GaussianProcessRegressor(kernel=m52_v, alpha=self.noise_v ** 2)
+        self.gpr_v = GaussianProcessRegressor(kernel=m52_v)
 
         ## X- and f- and v- sample
         np.random.seed(0)
         self.X_sample = np.random.rand(1) * 5
-        self.f_sample = f(self.X_sample)
-        self.v_sample = v(self.X_sample)
+        self.f_sample = f(self.X_sample[0])
+        self.f_sample = self.f_sample.reshape(-1, 1)
+        self.v_sample = v(self.X_sample[0]) - self.mean_mapping_v
+        for i in range(len(self.X_sample) - 1):
+            self.f_sample = np.append(self.f_sample, f(self.X_sample[i + 1]))
+            self.v_sample = np.append(self.v_sample, v(self.X_sample[i + 1]))
 
         # Fit the GPs
         self.gpr_f.fit(self.X_sample.reshape(-1, 1), self.f_sample.reshape(-1, 1))
@@ -62,6 +71,34 @@ class BO_algo:
         recommendation: np.ndarray
             1 x domain.shape[0] array containing the next point to evaluate
         """
+        # xx = np.linspace(0, 5, 1000)
+        # yy_f, sigma_f = self.gpr_f.predict(xx.reshape(-1, 1), return_std=True)
+        # yy_v, sigma_v = self.gpr_v.predict(xx.reshape(-1, 1), return_std=True)
+
+        # yyf = f(xx[0])
+        # for i in range(len(xx) - 1):
+        #     yyf = np.append(yyf, f(xx[i + 1]))
+        # plt.plot(self.X_sample, self.f_sample, "r.")
+        # plt.plot(self.X_sample[-1], self.f_sample[-1], ".", color="orange")
+        # plt.fill_between(
+        #     xx.reshape(len(xx)),
+        #     yy_f.reshape(len(xx)) - sigma_f,
+        #     yy_f.reshape(len(xx)) + sigma_f,
+        #     color="gray",
+        #     alpha=0.2,
+        # )
+
+        # plt.plot(xx, yy_f)
+        # plt.plot(xx, yy_v)
+        # plt.fill_between(
+        #     xx.reshape(len(xx)),
+        #     yy_v.reshape(len(xx)) - sigma_v,
+        #     yy_v.reshape(len(xx)) + sigma_v,
+        #     color="gray",
+        #     alpha=0.2,
+        # )
+        # plt.plot(xx, yyf)
+        # plt.show()
         return self.optimize_acquisition_function()
 
     def optimize_acquisition_function(self):
@@ -108,40 +145,51 @@ class BO_algo:
         mu_f, sigma_f = self.gpr_f.predict(np.asarray(x).reshape(-1, 1), return_std=True)
         mu_sample_f = self.gpr_f.predict(self.X_sample.reshape(-1, 1))
         mu_v, sigma_v = self.gpr_v.predict(np.asarray(x).reshape(-1, 1), return_std=True)
-        mu_sample_v = self.gpr_v.predict(self.X_sample.reshape(-1, 1))
+        mu_v = mu_v + self.mean_mapping_v
+        mu_sample_v = self.gpr_v.predict(self.X_sample.reshape(-1, 1)) + self.mean_mapping_v
+        xi = 0.01
 
         sigma_f = sigma_f.reshape(-1, 1)
         sigma_v = sigma_v.reshape(-1, 1)
 
-        # Needed for noise-based model,
-        # otherwise use np.max(Y_sample).
-        # See also section 2.4 in [...]
+        # mask = mu_sample_v > self.v_treshold
+        # if (mask == False).all():
+        #     mask = mu_sample_v < self.v_treshold
+        # mu_sample_opt = np.max(mu_sample_f[mask])
 
-        mask = (mu_sample_v > self.v_treshold)[0]
-        if (mask == False).all():
-            mu_sample_opt = np.max(mu_sample_f)
-            v_penalty = mu_sample_v[np.argmax(mu_sample_f)]
-        else:
-            mu_sample_opt = mu_sample_f[mask].max()
-            v_penalty = mu_sample_v[mu_sample_f[mask].argmax()]
+        mu_sample_opt = np.max(mu_sample_f)
+
+        # mu_sample_opt_v = np.max(mu_sample_v[mask])
+        # v_penalty = (mu_sample_v[mask])[np.argmax(mu_sample_f[mask])]
+        # mask = (mu_sample_v > self.v_treshold)[0]
+        # if (mask == False).all():
+        #     mu_sample_opt = np.max(mu_sample_f)
+        #     v_penalty = mu_sample_v[np.argmax(mu_sample_f)]
+        # else:
+        #     mu_sample_opt = mu_sample_f[mask].max()
+        #     v_penalty = mu_sample_v[mu_sample_f[mask].argmax()]
 
         # xi = (np.max(self.f_sample) - mu_f) / sigma_f
         with np.errstate(divide="warn"):
-            imp_f = mu_sample_opt - mu_f
-            Z_f = imp_f / sigma_f
+            imp_f = mu_f - mu_sample_opt - xi
+            Z_f = imp_f / (sigma_f)
             ei_f = imp_f * norm.cdf(Z_f) + sigma_f * norm.pdf(Z_f)
 
-            imp_v = v_penalty - mu_v
-            Z_v = imp_v / sigma_v
-            ei_v = imp_v * norm.cdf(Z_v) + sigma_v * norm.pdf(Z_v)
-
-            ei = ei_f + ei_v * 0.9
-
-            # if v_penalty < self.v_treshold:
-            #     ei += v_penalty
-            ei[sigma_f == 0.0] = 0.0
-            ei[sigma_v == 0.0] = 0.0
-
+            imp_v = mu_v - self.v_treshold  # - v_penalty - xi
+            Z_v = imp_v / (sigma_v)
+            Pr_v = norm.cdf(Z_v)  # + sigma_v * norm.pdf(Z_v)
+        # print(mu_v, sigma_v, self.v_treshold)
+        # g = np.log(mu_v) - np.log(self.v_treshold)
+        # print(ei_f, Pr_v)
+        ei = ei_f * Pr_v
+        # print(ei,x,-(self.v_treshold-0.8*mu_v)*np.abs(ei))
+        # if mu_v < self.v_treshold:
+        #     ei -= (self.v_treshold - 0.8 * mu_v) ** 2 * np.abs(ei) * 10
+        # else:
+        #     ei += self.v_treshold*2*ei*10
+        ei[sigma_f == 0.0] = 0.0
+        ei[sigma_v == 0.0] = 0.0
+        # print(ei,mu_v,x,v_penalty)
         return ei[0]
 
     def add_data_point(self, x, f, v):
@@ -160,7 +208,11 @@ class BO_algo:
 
         self.X_sample = np.append(self.X_sample, x)
         self.f_sample = np.append(self.f_sample, f)
-        self.v_sample = np.append(self.v_sample, v)
+        self.v_sample = np.append(self.v_sample, v - self.mean_mapping_v)
+
+        # Fit the GPs
+        self.gpr_f.fit(self.X_sample.reshape(-1, 1), self.f_sample.reshape(-1, 1))
+        self.gpr_v.fit(self.X_sample.reshape(-1, 1), self.v_sample.reshape(-1, 1))
 
     def get_solution(self):
         """
@@ -171,15 +223,29 @@ class BO_algo:
         solution: np.ndarray
             1 x domain.shape[0] array containing the optimal solution of the problem
         """
+        # xx = np.linspace(0,5,1000)
+        # yy = self.gpr_f.predict(xx.reshape(-1, 1))
 
-        mask = self.v_sample > self.v_treshold
+        # yyf = f(xx[0])
+        # for i in range(len(xx)-1):
+        #     yyf = np.append(yyf, f(xx[i+1]))
+        # plt.plot(self.X_sample,self.f_sample,'r.')
+        # plt.plot(self.X_sample[-1],self.f_sample[-1],'g.')
+        # plt.plot(xx,yy)
+        # plt.plot(xx,yyf)
+        # plt.show()
+
+        mask = self.v_sample > 0
         if (mask == False).all():
             mask = self.X_sample > 0
 
         X_sample = self.X_sample[mask]
         f_sample = self.f_sample[mask]
+        X_solution = X_sample[np.where(f_sample == f_sample.max())]
+        # print(X_solution)
 
-        return X_sample[np.where(f_sample == f_sample.max())]
+        # X_solution = self.X_sample[np.where(self.f_sample == self.f_sample.max())]
+        return X_solution
 
 
 """ Toy problem to check code works as expected """
